@@ -1,19 +1,16 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2026 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
+ * in compliance with the License. You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * software distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and limitations under the License.
  */
 
 import React, { FC, useState, useEffect } from 'react';
@@ -77,6 +74,8 @@ interface IntelligentModelRoutingConfig {
 interface IntelligentModelRoutingProps {
     setManualPolicyConfig: React.Dispatch<React.SetStateAction<string>>;
     manualPolicyConfig: string;
+    setIsFormValid?: React.Dispatch<React.SetStateAction<boolean>>;
+    showValidationErrors?: boolean;
 }
 
 const StyledAccordionSummary = styled(AccordionSummary)(() => ({
@@ -100,6 +99,8 @@ const StyledAccordionSummary = styled(AccordionSummary)(() => ({
 const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
     setManualPolicyConfig,
     manualPolicyConfig,
+    setIsFormValid,
+    showValidationErrors = false,
 }) => {
     const [apiFromContext] = useAPI();
     const [config, setConfig] = useState<IntelligentModelRoutingConfig>({
@@ -119,6 +120,59 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
     const [loading, setLoading] = useState<boolean>(false);
     const [productionEnabled, setProductionEnabled] = useState<boolean>(false);
     const [sandboxEnabled, setSandboxEnabled] = useState<boolean>(false);
+
+    // Validation logic
+    const validateForm = (): boolean => {
+        // If neither production nor sandbox is enabled, form is invalid
+        if (!productionEnabled && !sandboxEnabled) {
+            return false;
+        }
+
+        // Validate production if enabled
+        if (productionEnabled) {
+            // Default model and endpoint are required
+            if (!config.production.defaultModel.model || !config.production.defaultModel.endpointId) {
+                return false;
+            }
+            // Must have at least one routing rule
+            if (config.production.routingrules.length === 0) {
+                return false;
+            }
+            // Each rule must have all required fields filled
+            for (const rule of config.production.routingrules) {
+                if (!rule.model || !rule.endpointId || !rule.name || !rule.context) {
+                    return false;
+                }
+            }
+        }
+
+        // Validate sandbox if enabled
+        if (sandboxEnabled) {
+            // Default model and endpoint are required
+            if (!config.sandbox.defaultModel.model || !config.sandbox.defaultModel.endpointId) {
+                return false;
+            }
+            // Must have at least one routing rule
+            if (config.sandbox.routingrules.length === 0) {
+                return false;
+            }
+            // Each rule must have all required fields filled
+            for (const rule of config.sandbox.routingrules) {
+                if (!rule.model || !rule.endpointId || !rule.name || !rule.context) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    };
+
+    // Update form validity whenever relevant state changes
+    useEffect(() => {
+        if (setIsFormValid) {
+            setIsFormValid(validateForm());
+        }
+    }, [config, productionEnabled, sandboxEnabled, setIsFormValid]);
 
     const fetchEndpoints = () => {
         setLoading(true);
@@ -440,7 +494,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                         </Typography>
                     </Grid>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !envConfig.defaultModel.model}>
                             <InputLabel id={`default-model-label-${env}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.model'
@@ -452,6 +506,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                                 id={`default-model-${env}`}
                                 value={envConfig.defaultModel.model}
                                 label='Model'
+                                error={showValidationErrors && !envConfig.defaultModel.model}
                                 onChange={(e) => handleDefaultModelUpdate(env, 'model', e.target.value as string)}
                             >
                                 {modelList.flatMap((vendor) => 
@@ -465,7 +520,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                         </FormControl>
                     </Grid>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !envConfig.defaultModel.endpointId}>
                             <InputLabel id={`default-endpoint-label-${env}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.endpoint'
@@ -477,6 +532,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                                 id={`default-endpoint-${env}`}
                                 value={envConfig.defaultModel.endpointId}
                                 label='Endpoint'
+                                error={showValidationErrors && !envConfig.defaultModel.endpointId}
                                 onChange={(e) => handleDefaultModelUpdate(env, 'endpointId', e.target.value as string)}
                             >
                                 {endpoints.map((endpoint) => (
@@ -486,6 +542,14 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                                 ))}
                             </Select>
                         </FormControl>
+                    </Grid>
+                    <Grid item xs={12}>
+                        <Typography variant='caption' color='textSecondary'>
+                            <FormattedMessage
+                                id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.defaultmodel.info'
+                                defaultMessage='This model will be used when no routing rule matches the request.'
+                            />
+                        </Typography>
                     </Grid>
                 </Grid>
             </Paper>
@@ -535,7 +599,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
             <Paper elevation={2} sx={{ padding: 2, margin: 1, position: 'relative' }}>
                 <Grid container spacing={2}>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !rule.model}>
                             <InputLabel id={`model-label-${env}-${index}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.model'
@@ -547,6 +611,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                                 id={`model-${env}-${index}`}
                                 value={rule.model}
                                 label='Model'
+                                error={showValidationErrors && !rule.model}
                                 onChange={(e) => handleModelChange(e.target.value as string)}
                             >
                                 {modelList.flatMap((vendor) => 
@@ -560,7 +625,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                         </FormControl>
                     </Grid>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !rule.endpointId}>
                             <InputLabel id={`endpoint-label-${env}-${index}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.endpoint'
@@ -572,6 +637,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                                 id={`endpoint-${env}-${index}`}
                                 value={rule.endpointId}
                                 label='Endpoint'
+                                error={showValidationErrors && !rule.endpointId}
                                 onChange={(e) => handleEndpointChange(e.target.value as string)}
                             >
                                 {endpoints.map((endpoint) => (
@@ -595,7 +661,8 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                             value={rule.name}
                             onChange={(e) => handleNameChange(e.target.value)}
                             placeholder='e.g., code-generation'
-                            helperText='For identification, provide a unique name'
+                            helperText={(showValidationErrors && !rule.name) ? 'Required field is empty' : 'For identification, provide a unique name'}
+                            error={showValidationErrors && !rule.name}
                             required
                         />
                     </Grid>
@@ -614,7 +681,8 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                             value={rule.context}
                             onChange={(e) => handleContextChange(e.target.value)}
                             placeholder='Describe the context for this rule'
-                            helperText='Provide a description of when this rule should be used'
+                            helperText={(showValidationErrors && !rule.context) ? 'Required field is empty' : 'Provide a description of when this rule should be used'}
+                            error={showValidationErrors && !rule.context}
                             required
                         />
                     </Grid>

@@ -1,19 +1,16 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2026 WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
+ * in compliance with the License. You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * software distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and limitations under the License.
  */
 
 import React, { FC, useState, useEffect } from 'react';
@@ -78,6 +75,8 @@ interface PathConfig {
 interface SemanticRoutingProps {
     setManualPolicyConfig: React.Dispatch<React.SetStateAction<string>>;
     manualPolicyConfig: string;
+    setIsFormValid?: React.Dispatch<React.SetStateAction<boolean>>;
+    showValidationErrors?: boolean;
 }
 
 const StyledAccordionSummary = styled(AccordionSummary)(() => ({
@@ -101,6 +100,8 @@ const StyledAccordionSummary = styled(AccordionSummary)(() => ({
 const SemanticRouting: FC<SemanticRoutingProps> = ({
     setManualPolicyConfig,
     manualPolicyConfig,
+    setIsFormValid,
+    showValidationErrors = false,
 }) => {
     const [apiFromContext] = useAPI();
     const [config, setConfig] = useState<SemanticRoutingConfig>({
@@ -120,6 +121,59 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
     const [loading, setLoading] = useState<boolean>(false);
     const [productionEnabled, setProductionEnabled] = useState<boolean>(false);
     const [sandboxEnabled, setSandboxEnabled] = useState<boolean>(false);
+
+    // Validation logic
+    const validateForm = (): boolean => {
+        // If neither production nor sandbox is enabled, form is invalid
+        if (!productionEnabled && !sandboxEnabled) {
+            return false;
+        }
+
+        // Validate production if enabled
+        if (productionEnabled) {
+            // Default model and endpoint are required
+            if (!config.production.defaultModel.model || !config.production.defaultModel.endpointId) {
+                return false;
+            }
+            // Must have at least one route
+            if (config.production.routes.length === 0) {
+                return false;
+            }
+            // Each route must have all required fields filled
+            for (const route of config.production.routes) {
+                if (!route.model || !route.endpointId || route.utterances.length === 0) {
+                    return false;
+                }
+            }
+        }
+
+        // Validate sandbox if enabled
+        if (sandboxEnabled) {
+            // Default model and endpoint are required
+            if (!config.sandbox.defaultModel.model || !config.sandbox.defaultModel.endpointId) {
+                return false;
+            }
+            // Must have at least one route
+            if (config.sandbox.routes.length === 0) {
+                return false;
+            }
+            // Each route must have all required fields filled
+            for (const route of config.sandbox.routes) {
+                if (!route.model || !route.endpointId || route.utterances.length === 0) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    };
+
+    // Update form validity whenever relevant state changes
+    useEffect(() => {
+        if (setIsFormValid) {
+            setIsFormValid(validateForm());
+        }
+    }, [config, productionEnabled, sandboxEnabled, setIsFormValid]);
 
     const fetchEndpoints = () => {
         setLoading(true);
@@ -495,7 +549,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                         </Typography>
                     </Grid>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !envConfig.defaultModel.model}>
                             <InputLabel id={`default-model-label-${env}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.SemanticRouting.select.model'
@@ -507,6 +561,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                                 id={`default-model-${env}`}
                                 value={envConfig.defaultModel.model}
                                 label='Model'
+                                error={showValidationErrors && !envConfig.defaultModel.model}
                                 onChange={(e) => handleDefaultModelUpdate(env, 'model', e.target.value as string)}
                             >
                                 {modelList.flatMap((vendor) => 
@@ -520,7 +575,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                         </FormControl>
                     </Grid>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !envConfig.defaultModel.endpointId}>
                             <InputLabel id={`default-endpoint-label-${env}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.SemanticRouting.select.endpoint'
@@ -532,6 +587,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                                 id={`default-endpoint-${env}`}
                                 value={envConfig.defaultModel.endpointId}
                                 label='Endpoint'
+                                error={showValidationErrors && !envConfig.defaultModel.endpointId}
                                 onChange={(e) => handleDefaultModelUpdate(env, 'endpointId', e.target.value as string)}
                             >
                                 {endpoints.map((endpoint) => (
@@ -541,6 +597,14 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                                 ))}
                             </Select>
                         </FormControl>
+                    </Grid>
+                    <Grid item xs={12}>
+                        <Typography variant='caption' color='textSecondary'>
+                            <FormattedMessage
+                                id='Apis.Details.Policies.CustomPolicies.SemanticRouting.defaultmodel.info'
+                                defaultMessage='This model will be used when no routing rule matches the request.'
+                            />
+                        </Typography>
                     </Grid>
                 </Grid>
             </Paper>
@@ -586,7 +650,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
             <Paper elevation={2} sx={{ padding: 2, margin: 1, position: 'relative' }}>
                 <Grid container spacing={2}>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !route.model}>
                             <InputLabel id={`model-label-${env}-${index}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.SemanticRouting.select.model'
@@ -598,6 +662,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                                 id={`model-${env}-${index}`}
                                 value={route.model}
                                 label='Model'
+                                error={showValidationErrors && !route.model}
                                 onChange={(e) => handleModelChange(e.target.value as string)}
                             >
                                 {modelList.flatMap((vendor) => 
@@ -611,7 +676,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                         </FormControl>
                     </Grid>
                     <Grid item xs={12}>
-                        <FormControl size='small' fullWidth>
+                        <FormControl size='small' fullWidth error={showValidationErrors && !route.endpointId}>
                             <InputLabel id={`endpoint-label-${env}-${index}`}>
                                 <FormattedMessage
                                     id='Apis.Details.Policies.CustomPolicies.SemanticRouting.select.endpoint'
@@ -623,6 +688,7 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                                 id={`endpoint-${env}-${index}`}
                                 value={route.endpointId}
                                 label='Endpoint'
+                                error={showValidationErrors && !route.endpointId}
                                 onChange={(e) => handleEndpointChange(e.target.value as string)}
                             >
                                 {endpoints.map((endpoint) => (
@@ -675,11 +741,11 @@ const SemanticRouting: FC<SemanticRoutingProps> = ({
                                 }
                             }}
                             helperText={
-                                <FormattedMessage
-                                    id='Apis.Details.Policies.CustomPolicies.SemanticRouting.utterances.helper'
-                                    defaultMessage='Enter keywords to match similarity. Press Enter to add. At least one utterance is required.'
-                                />
+                                (showValidationErrors && route.utterances.length === 0)
+                                    ? 'Required field is empty'
+                                    : 'Enter keywords to match similarity. Press Enter to add. At least one utterance is required.'
                             }
+                            error={showValidationErrors && route.utterances.length === 0}
                             placeholder='Type utterance and press Enter'
                             required
                             InputProps={{

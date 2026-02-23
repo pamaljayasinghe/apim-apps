@@ -133,6 +133,8 @@ const General: FC<GeneralProps> = ({
     const [isManual, setManual] = useState(false);
     const [manualPolicyConfig, setManualPolicyConfig] = useState<string>('');
     const [secretVisibility, setSecretVisibility] = useState<Record<string, boolean>>({});
+    const [isManualFormValid, setIsManualFormValid] = useState<boolean>(true);
+    const [showValidationErrors, setShowValidationErrors] = useState<boolean>(false);
 
     useEffect(() => {
         if (
@@ -209,6 +211,14 @@ const General: FC<GeneralProps> = ({
      */
     const submitForm = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        if (
+            isManual &&
+            (policyObj?.name === 'semanticRouting' || policyObj?.name === 'intelligentModelRouting') &&
+            !isManualFormValid
+        ) {
+            setShowValidationErrors(true);
+            return;
+        }
         setSaving(true);
         const updateCandidates: any = {};
         Object.keys(state).forEach((key) => {
@@ -492,12 +502,16 @@ const General: FC<GeneralProps> = ({
                         <SemanticRouting
                             setManualPolicyConfig={setManualPolicyConfig}
                             manualPolicyConfig={getValue(policySpec.policyAttributes[0])}
+                            setIsFormValid={setIsManualFormValid}
+                            showValidationErrors={showValidationErrors}
                         />
                     )}
                     {(isManual && policyObj.name === 'intelligentModelRouting') && (
                         <IntelligentModelRouting
                             setManualPolicyConfig={setManualPolicyConfig}
                             manualPolicyConfig={getValue(policySpec.policyAttributes[0])}
+                            setIsFormValid={setIsManualFormValid}
+                            showValidationErrors={showValidationErrors}
                         />
                     )}
                     {!isManual && policySpec.policyAttributes && policySpec.policyAttributes.map((spec: PolicySpecAttribute) => (
@@ -734,7 +748,12 @@ const General: FC<GeneralProps> = ({
                             type='submit'
                             color='primary'
                             data-testid='policy-attached-details-save'
-                            disabled={!isManual && (isSaveDisabled() || formHasErrors() || saving)}
+                            disabled={
+                                isManual
+                                    ? saving
+                                    : (isSaveDisabled() || formHasErrors() || saving)
+                            }
+                            onClick={() => setShowValidationErrors(true)}
                         >
                             {saving
                                 ? <>
