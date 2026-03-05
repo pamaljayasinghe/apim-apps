@@ -26,7 +26,8 @@ import AddCircle from '@mui/icons-material/AddCircle';
 import API from 'AppData/api';
 import { Progress } from 'AppComponents/Shared';
 import { useAPI } from 'AppComponents/Apis/Details/components/ApiContext';
-import { Endpoint, ModelVendor } from './Types';
+import { Endpoint, ModelData, ModelVendor } from './Types';
+import ModelCard from './ModelCard';
 import { styled } from '@mui/material/styles';
 import Alert from '@mui/material/Alert';
 import { Link } from 'react-router-dom';
@@ -35,40 +36,28 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import CONSTS from 'AppData/Constants';
 import Paper from '@mui/material/Paper';
 import IconButton from '@mui/material/IconButton';
+import Box from '@mui/material/Box';
 import DeleteIcon from '@mui/icons-material/Delete';
-import FormControl from '@mui/material/FormControl';
-import InputLabel from '@mui/material/InputLabel';
-import Select from '@mui/material/Select';
-import MenuItem from '@mui/material/MenuItem';
-// import Chip from '@mui/material/Chip';
-// import Box from '@mui/material/Box';
 
 interface RoutingRuleConfig {
     id: string;
     name: string;
     context: string;
+    vendor: string;
     model: string;
     endpointId: string;
-}
-
-interface DefaultModelConfig {
-    model: string;
-    endpointId: string;
-}
-
-interface ContentPathConfig {
-    path: string;
+    endpointName: string;
 }
 
 interface EnvironmentConfig {
-    defaultModel: DefaultModelConfig;
+    defaultModel: ModelData;
     routingrules: RoutingRuleConfig[];
 }
 
 interface IntelligentModelRoutingConfig {
     production: EnvironmentConfig;
     sandbox: EnvironmentConfig;
-    contentPath: ContentPathConfig;
+    contentPath: { path: string };
 }
 
 interface IntelligentModelRoutingProps {
@@ -76,7 +65,28 @@ interface IntelligentModelRoutingProps {
     manualPolicyConfig: string;
     setIsFormValid?: React.Dispatch<React.SetStateAction<boolean>>;
     showValidationErrors?: boolean;
+    setShowValidationErrors?: React.Dispatch<React.SetStateAction<boolean>>;
 }
+
+// Default empty model structure for consistent initialization
+const EMPTY_MODEL: ModelData = { vendor: '', model: '', endpointId: '', endpointName: '' };
+
+// Normalizes incomplete/legacy model objects by providing default empty strings for missing fields
+const normalizeModelData = (model: any): ModelData => ({
+    vendor: model?.vendor ?? '',
+    model: model?.model ?? '',
+    endpointId: model?.endpointId ?? '',
+    endpointName: model?.endpointName ?? '',
+});
+
+// Parses policy config JSON with fallback for legacy single-quoted payloads
+const parsePolicyConfig = (value: string) => {
+    try {
+        return JSON.parse(value);
+    } catch {
+        return JSON.parse(value.replace(/'/g, '"'));
+    }
+};
 
 const StyledAccordionSummary = styled(AccordionSummary)(() => ({
     minHeight: 48,
@@ -101,15 +111,16 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
     manualPolicyConfig,
     setIsFormValid,
     showValidationErrors = false,
+    setShowValidationErrors,
 }) => {
     const [apiFromContext] = useAPI();
     const [config, setConfig] = useState<IntelligentModelRoutingConfig>({
         production: {
-            defaultModel: { model: '', endpointId: '' },
+            defaultModel: { ...EMPTY_MODEL },
             routingrules: [],
         },
         sandbox: {
-            defaultModel: { model: '', endpointId: '' },
+            defaultModel: { ...EMPTY_MODEL },
             routingrules: [],
         },
         contentPath: { path: '' },
@@ -120,25 +131,25 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
     const [loading, setLoading] = useState<boolean>(false);
     const [productionEnabled, setProductionEnabled] = useState<boolean>(false);
     const [sandboxEnabled, setSandboxEnabled] = useState<boolean>(false);
+    const isInternalUpdate = React.useRef(false);
 
-    // Validation logic
     const validateForm = (): boolean => {
-        // If neither production nor sandbox is enabled, form is invalid
         if (!productionEnabled && !sandboxEnabled) {
             return false;
         }
 
-        // Validate production if enabled
+        // Content path is required
+        if (!config.contentPath?.path || config.contentPath.path.trim() === '') {
+            return false;
+        }
+
         if (productionEnabled) {
-            // Default model and endpoint are required
             if (!config.production.defaultModel.model || !config.production.defaultModel.endpointId) {
                 return false;
             }
-            // Must have at least one routing rule
             if (config.production.routingrules.length === 0) {
                 return false;
             }
-            // Each rule must have all required fields filled
             for (const rule of config.production.routingrules) {
                 if (!rule.model || !rule.endpointId || !rule.name || !rule.context) {
                     return false;
@@ -146,17 +157,13 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
             }
         }
 
-        // Validate sandbox if enabled
         if (sandboxEnabled) {
-            // Default model and endpoint are required
             if (!config.sandbox.defaultModel.model || !config.sandbox.defaultModel.endpointId) {
                 return false;
             }
-            // Must have at least one routing rule
             if (config.sandbox.routingrules.length === 0) {
                 return false;
             }
-            // Each rule must have all required fields filled
             for (const rule of config.sandbox.routingrules) {
                 if (!rule.model || !rule.endpointId || !rule.name || !rule.context) {
                     return false;
@@ -167,7 +174,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
         return true;
     };
 
-    // Update form validity whenever relevant state changes
+    // Sync form validity state with parent component on config changes
     useEffect(() => {
         if (setIsFormValid) {
             setIsFormValid(validateForm());
@@ -239,25 +246,37 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
         fetchEndpoints();
     }, []);
 
+    // Hydrates component state from external policy config string (skips internal updates)
     useEffect(() => {
-        if (manualPolicyConfig !== '') {
+        if (manualPolicyConfig !== '' && !isInternalUpdate.current) {
             try {
-                const parsedConfig = JSON.parse(manualPolicyConfig.replace(/'/g, '"'));
+                const parsedConfig = parsePolicyConfig(manualPolicyConfig);
                 
+                // Normalize parsed data for backward compatibility
                 const productionConfig: EnvironmentConfig = {
-                    defaultModel: parsedConfig.production?.defaultModel || { model: '', endpointId: '' },
-                    routingrules: parsedConfig.production?.routingrules || [],
+                    defaultModel: normalizeModelData(parsedConfig.production?.defaultModel ?? EMPTY_MODEL),
+                    routingrules: (parsedConfig.production?.routingrules || []).map((rule: any) => ({
+                        ...rule,
+                        vendor: rule.vendor || '',
+                        endpointName: rule.endpointName || '',
+                    })),
                 };
                 
                 const sandboxConfig: EnvironmentConfig = {
-                    defaultModel: parsedConfig.sandbox?.defaultModel || { model: '', endpointId: '' },
-                    routingrules: parsedConfig.sandbox?.routingrules || [],
+                    defaultModel: normalizeModelData(parsedConfig.sandbox?.defaultModel ?? EMPTY_MODEL),
+                    routingrules: (parsedConfig.sandbox?.routingrules || []).map((rule: any) => ({
+                        ...rule,
+                        vendor: rule.vendor || '',
+                        endpointName: rule.endpointName || '',
+                    })),
                 };
                 
+                // Hydrate state with legacy 'path' field fallback
                 setConfig({
                     production: productionConfig,
                     sandbox: sandboxConfig,
-                    contentPath: parsedConfig.contentPath || { path: '' },
+                    contentPath: parsedConfig.contentPath
+                        ?? (parsedConfig.path ? { path: parsedConfig.path } : { path: '' }),
                 });
                 
                 const hasProductionConfig = parsedConfig.production && parsedConfig.production.routingrules && parsedConfig.production.routingrules.length > 0;
@@ -269,39 +288,39 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                 console.error('Error parsing manual policy config:', error);
                 setConfig({
                     production: {
-                        defaultModel: { model: '', endpointId: '' },
+                        defaultModel: { ...EMPTY_MODEL },
                         routingrules: [],
                     },
                     sandbox: {
-                        defaultModel: { model: '', endpointId: '' },
+                        defaultModel: { ...EMPTY_MODEL },
                         routingrules: [],
                     },
                     contentPath: { path: '' },
                 });
             }
         }
+        isInternalUpdate.current = false;
     }, [manualPolicyConfig]);
 
     useEffect(() => {
-        const configForBackend = {
-            production: config.production,
-            sandbox: config.sandbox,
-            contentPath: config.contentPath,
-        };
-        
-        const jsonString = JSON.stringify(configForBackend);
-        const formattedString = jsonString.replace(/"/g, "'");
-        setManualPolicyConfig(formattedString);
+        isInternalUpdate.current = true;
+        setManualPolicyConfig(JSON.stringify(config).replace(/'/g, '\\u0027').replace(/"/g, "'"));
     }, [config, setManualPolicyConfig]);
 
     const handleAddProductionRule = () => {
         const newRule: RoutingRuleConfig = {
-            id: `rule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            id: `rule-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             name: '',
             context: '',
+            vendor: '',
             model: '',
             endpointId: '',
+            endpointName: '',
         };
+
+        if (setShowValidationErrors) {
+            setShowValidationErrors(false);
+        }
 
         setConfig((prevConfig) => ({
             ...prevConfig,
@@ -336,12 +355,18 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
 
     const handleAddSandboxRule = () => {
         const newRule: RoutingRuleConfig = {
-            id: `rule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            id: `rule-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             name: '',
             context: '',
+            vendor: '',
             model: '',
             endpointId: '',
+            endpointName: '',
         };
+
+        if (setShowValidationErrors) {
+            setShowValidationErrors(false);
+        }
 
         setConfig((prevConfig) => ({
             ...prevConfig,
@@ -374,15 +399,30 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
         }));
     }
 
-    const handleDefaultModelUpdate = (env: 'production' | 'sandbox', field: keyof DefaultModelConfig, value: string) => {
+    const handleDefaultModelUpdate = (env: 'production' | 'sandbox', updatedModel: ModelData) => {
         setConfig((prevConfig) => ({
             ...prevConfig,
             [env]: {
                 ...prevConfig[env],
-                defaultModel: {
-                    ...prevConfig[env].defaultModel,
-                    [field]: value,
-                },
+                defaultModel: updatedModel,
+            },
+        }));
+    }
+
+    const handleRuleModelUpdate = (env: 'production' | 'sandbox', index: number, updatedModel: ModelData) => {
+        setConfig((prevConfig) => ({
+            ...prevConfig,
+            [env]: {
+                ...prevConfig[env],
+                routingrules: prevConfig[env].routingrules.map((item, i) =>
+                    i === index ? {
+                        ...item,
+                        vendor: updatedModel.vendor,
+                        model: updatedModel.model,
+                        endpointId: updatedModel.endpointId,
+                        endpointName: updatedModel.endpointName,
+                    } : item
+                ),
             },
         }));
     }
@@ -411,7 +451,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
             setConfig(prev => ({
                 ...prev,
                 production: {
-                    defaultModel: { model: '', endpointId: '' },
+                    defaultModel: { ...EMPTY_MODEL },
                     routingrules: [],
                 },
             }));
@@ -424,7 +464,7 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
             setConfig(prev => ({
                 ...prev,
                 sandbox: {
-                    defaultModel: { model: '', endpointId: '' },
+                    defaultModel: { ...EMPTY_MODEL },
                     routingrules: [],
                 },
             }));
@@ -446,6 +486,9 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
 
 
     const renderContentPath = () => {
+        const contentPathError = showValidationErrors
+            && (!config.contentPath?.path || config.contentPath.path.trim() === '');
+
         return (
             <Paper elevation={2} sx={{ padding: 2, marginTop: 2, marginBottom: 1 }}>
                 <Grid container spacing={2}>
@@ -470,8 +513,18 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                             value={config.contentPath.path || ''}
                             onChange={(e) => handleContentPathUpdate(e.target.value)}
                             placeholder="$.contents[*].parts[*].text"
-                            helperText="The JSONPath expression used to extract content from the payload. If not specified, the entire payload will be used for validation."
-                            required
+                            error={contentPathError}
+                            helperText={contentPathError ? (
+                                <FormattedMessage
+                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.contentpath.required'
+                                    defaultMessage='Required field is empty'
+                                />
+                            ) : (
+                                <FormattedMessage
+                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.contentpath.info'
+                                    defaultMessage='The JSONPath expression used to extract content from the payload.'
+                                />
+                            )}
                         />
                     </Grid>
                 </Grid>
@@ -481,78 +534,47 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
 
     const renderDefaultModel = (env: 'production' | 'sandbox', endpoints: Endpoint[]) => {
         const envConfig = config[env];
-        
+        const hasDefaultModelError = showValidationErrors
+            && (!envConfig.defaultModel.model || !envConfig.defaultModel.endpointId);
+
         return (
-            <Paper elevation={2} sx={{ padding: 2, marginTop: 2, marginBottom: 1 }}>
-                <Grid container spacing={2}>
-                    <Grid item xs={12}>
-                        <Typography variant='subtitle2' sx={{ mb: 1 }}>
-                            <FormattedMessage
-                                id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.defaultmodel.title'
-                                defaultMessage='Default Model'
-                            />
-                        </Typography>
-                    </Grid>
-                    <Grid item xs={12}>
-                        <FormControl size='small' fullWidth error={showValidationErrors && !envConfig.defaultModel.model}>
-                            <InputLabel id={`default-model-label-${env}`}>
-                                <FormattedMessage
-                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.model'
-                                    defaultMessage='Model'
-                                />
-                            </InputLabel>
-                            <Select
-                                labelId={`default-model-label-${env}`}
-                                id={`default-model-${env}`}
-                                value={envConfig.defaultModel.model}
-                                label='Model'
-                                error={showValidationErrors && !envConfig.defaultModel.model}
-                                onChange={(e) => handleDefaultModelUpdate(env, 'model', e.target.value as string)}
-                            >
-                                {modelList.flatMap((vendor) => 
-                                    vendor.values.map((modelValue) => (
-                                        <MenuItem key={modelValue} value={modelValue}>
-                                            {modelValue}
-                                        </MenuItem>
-                                    ))
-                                )}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-                    <Grid item xs={12}>
-                        <FormControl size='small' fullWidth error={showValidationErrors && !envConfig.defaultModel.endpointId}>
-                            <InputLabel id={`default-endpoint-label-${env}`}>
-                                <FormattedMessage
-                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.endpoint'
-                                    defaultMessage='Endpoint'
-                                />
-                            </InputLabel>
-                            <Select
-                                labelId={`default-endpoint-label-${env}`}
-                                id={`default-endpoint-${env}`}
-                                value={envConfig.defaultModel.endpointId}
-                                label='Endpoint'
-                                error={showValidationErrors && !envConfig.defaultModel.endpointId}
-                                onChange={(e) => handleDefaultModelUpdate(env, 'endpointId', e.target.value as string)}
-                            >
-                                {endpoints.map((endpoint) => (
-                                    <MenuItem key={endpoint.id} value={endpoint.id}>
-                                        {endpoint.name}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-                    <Grid item xs={12}>
-                        <Typography variant='caption' color='textSecondary'>
-                            <FormattedMessage
-                                id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.defaultmodel.info'
-                                defaultMessage='This model will be used when no routing rule matches the request.'
-                            />
-                        </Typography>
-                    </Grid>
-                </Grid>
-            </Paper>
+            <>
+                <Typography variant='subtitle2' sx={{ mb: 1 }}>
+                    <FormattedMessage
+                        id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.defaultmodel.title'
+                        defaultMessage='Default Model'
+                    />
+                </Typography>
+                <Box sx={{
+                    ...(hasDefaultModelError && {
+                        '& .MuiOutlinedInput-notchedOutline': {
+                            borderColor: '#d32f2f',
+                        },
+                    }),
+                }}>
+                    <ModelCard
+                        modelData={envConfig.defaultModel}
+                        modelList={modelList}
+                        endpointList={endpoints}
+                        isWeightApplicable={false}
+                        onUpdate={(updatedModel) => handleDefaultModelUpdate(env, updatedModel)}
+                    />
+                </Box>
+                {hasDefaultModelError && (
+                    <Typography variant='caption' color='error' sx={{ ml: 1, display: 'block' }}>
+                        <FormattedMessage
+                            id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.defaultmodel.required'
+                            defaultMessage='Default model and endpoint selection are required'
+                        />
+                    </Typography>
+                )}
+                <Typography variant='caption' color='textSecondary' sx={{ ml: 1 }}>
+                    <FormattedMessage
+                        id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.defaultmodel.info'
+                        defaultMessage='This model will be used when no routing rule matches the request.'
+                    />
+                </Typography>
+            </>
         );
     };
 
@@ -579,75 +601,49 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
             }
         };
 
-        const handleModelChange = (value: string) => {
-            if (env === 'production') {
-                handleProductionRuleUpdate(index, 'model', value);
-            } else {
-                handleSandboxRuleUpdate(index, 'model', value);
-            }
+        const ruleModelData: ModelData = {
+            vendor: rule.vendor,
+            model: rule.model,
+            endpointId: rule.endpointId,
+            endpointName: rule.endpointName,
         };
 
-        const handleEndpointChange = (value: string) => {
-            if (env === 'production') {
-                handleProductionRuleUpdate(index, 'endpointId', value);
-            } else {
-                handleSandboxRuleUpdate(index, 'endpointId', value);
-            }
-        };
+        const hasModelError = showValidationErrors && (!rule.model || !rule.endpointId);
 
         return (
-            <Paper elevation={2} sx={{ padding: 2, margin: 1, position: 'relative' }}>
-                <Grid container spacing={2}>
-                    <Grid item xs={12}>
-                        <FormControl size='small' fullWidth error={showValidationErrors && !rule.model}>
-                            <InputLabel id={`model-label-${env}-${index}`}>
-                                <FormattedMessage
-                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.model'
-                                    defaultMessage='Model'
-                                />
-                            </InputLabel>
-                            <Select
-                                labelId={`model-label-${env}-${index}`}
-                                id={`model-${env}-${index}`}
-                                value={rule.model}
-                                label='Model'
-                                error={showValidationErrors && !rule.model}
-                                onChange={(e) => handleModelChange(e.target.value as string)}
-                            >
-                                {modelList.flatMap((vendor) => 
-                                    vendor.values.map((modelValue) => (
-                                        <MenuItem key={modelValue} value={modelValue}>
-                                            {modelValue}
-                                        </MenuItem>
-                                    ))
-                                )}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-                    <Grid item xs={12}>
-                        <FormControl size='small' fullWidth error={showValidationErrors && !rule.endpointId}>
-                            <InputLabel id={`endpoint-label-${env}-${index}`}>
-                                <FormattedMessage
-                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.select.endpoint'
-                                    defaultMessage='Endpoint'
-                                />
-                            </InputLabel>
-                            <Select
-                                labelId={`endpoint-label-${env}-${index}`}
-                                id={`endpoint-${env}-${index}`}
-                                value={rule.endpointId}
-                                label='Endpoint'
-                                error={showValidationErrors && !rule.endpointId}
-                                onChange={(e) => handleEndpointChange(e.target.value as string)}
-                            >
-                                {endpoints.map((endpoint) => (
-                                    <MenuItem key={endpoint.id} value={endpoint.id}>
-                                        {endpoint.name}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Grid>
+            // Single card wrapping model selection and rule fields
+            <Paper elevation={2} sx={{ padding: 2, margin: 1, mb: 1.5, position: 'relative' }}>
+                {/* Override ModelCard inner Paper to merge into single card */}
+                <Box sx={{
+                    '& > .MuiPaper-root': {
+                        boxShadow: 'none',
+                        margin: 0,
+                        padding: 0,
+                        background: 'transparent',
+                    },
+                    ...(hasModelError && {
+                        '& .MuiOutlinedInput-notchedOutline': {
+                            borderColor: '#d32f2f',
+                        },
+                    }),
+                }}>
+                    <ModelCard
+                        modelData={ruleModelData}
+                        modelList={modelList}
+                        endpointList={endpoints}
+                        isWeightApplicable={false}
+                        onUpdate={(updatedModel) => handleRuleModelUpdate(env, index, updatedModel)}
+                    />
+                </Box>
+                {hasModelError && (
+                    <Typography variant='caption' color='error' sx={{ display: 'block', mb: 1 }}>
+                        <FormattedMessage
+                            id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.rule.model.required'
+                            defaultMessage='Model and endpoint selection are required'
+                        />
+                    </Typography>
+                )}
+                <Grid container spacing={2} sx={{ mt: 0.5 }}>
                     <Grid item xs={12}>
                         <TextField
                             size='small'
@@ -660,10 +656,20 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                             }
                             value={rule.name}
                             onChange={(e) => handleNameChange(e.target.value)}
+                            inputProps={{ maxLength: 50 }}
                             placeholder='e.g., code-generation'
-                            helperText={(showValidationErrors && !rule.name) ? 'Required field is empty' : 'For identification, provide a unique name'}
+                            helperText={(showValidationErrors && !rule.name) ? (
+                                <FormattedMessage
+                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.rule.name.required'
+                                    defaultMessage='Required field is empty'
+                                />
+                            ) : (
+                                <FormattedMessage
+                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.rule.name.info'
+                                    defaultMessage='For identification, provide a unique name'
+                                />
+                            )}
                             error={showValidationErrors && !rule.name}
-                            required
                         />
                     </Grid>
                     <Grid item xs={12}>
@@ -681,32 +687,28 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                             value={rule.context}
                             onChange={(e) => handleContextChange(e.target.value)}
                             placeholder='Describe the context for this rule'
-                            helperText={(showValidationErrors && !rule.context) ? 'Required field is empty' : 'Provide a description of when this rule should be used'}
+                            helperText={(showValidationErrors && !rule.context) ? (
+                                <FormattedMessage
+                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.rule.context.required'
+                                    defaultMessage='Required field is empty'
+                                />
+                            ) : (
+                                <FormattedMessage
+                                    id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.rule.context.info'
+                                    defaultMessage='Provide a description of when this rule should be used'
+                                />
+                            )}
                             error={showValidationErrors && !rule.context}
-                            required
                         />
                     </Grid>
-                    {onDelete && (
-                        <Grid
-                            item
-                            xs={12}
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'flex-end',
-                                mt: 1,
-                            }}
-                        >
-                            <IconButton
-                                color='error'
-                                data-testid='rule-delete'
-                                onClick={onDelete}
-                                size="small"
-                            >
-                                <DeleteIcon />
-                            </IconButton>
-                        </Grid>
-                    )}
                 </Grid>
+                {onDelete && (
+                    <Grid container justifyContent='flex-end' sx={{ mt: 1 }}>
+                        <IconButton color='error' onClick={onDelete} size='small'>
+                            <DeleteIcon />
+                        </IconButton>
+                    </Grid>
+                )}
             </Paper>
         );
     };
@@ -786,6 +788,14 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                                         defaultMessage='Add Rule'
                                     />
                                 </Button>
+                                {showValidationErrors && config.production.routingrules.length === 0 && (
+                                    <Typography variant='caption' color='error' sx={{ ml: 1, display: 'block', mb: 1 }}>
+                                        <FormattedMessage
+                                            id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.rules.required'
+                                            defaultMessage='At least one routing rule is required'
+                                        />
+                                    </Typography>
+                                )}
                                 {config.production.routingrules.map((rule, index) => (
                                     <React.Fragment key={rule.id || `production-rule-${index}`}>
                                         {renderRuleCard(
@@ -873,6 +883,14 @@ const IntelligentModelRouting: FC<IntelligentModelRoutingProps> = ({
                                         defaultMessage='Add Rule'
                                     />
                                 </Button>
+                                {showValidationErrors && config.sandbox.routingrules.length === 0 && (
+                                    <Typography variant='caption' color='error' sx={{ ml: 1, display: 'block', mb: 1 }}>
+                                        <FormattedMessage
+                                            id='Apis.Details.Policies.CustomPolicies.IntelligentModelRouting.rules.required'
+                                            defaultMessage='At least one routing rule is required'
+                                        />
+                                    </Typography>
+                                )}
                                 {config.sandbox.routingrules.map((rule, index) => (
                                     <React.Fragment key={rule.id || `sandbox-rule-${index}`}>
                                         {renderRuleCard(
